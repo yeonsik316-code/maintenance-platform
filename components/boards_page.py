@@ -1,8 +1,18 @@
+import re
+import uuid
+
 import streamlit as st
 from streamlit_quill import st_quill
 
+from components.message_dialog import queue_message
 from config import STORAGE_BUCKET
-from utils.supabase_client import get_supabase, is_admin
+from utils.supabase_client import (
+    format_storage_error,
+    get_storage_client,
+    get_supabase,
+    is_admin,
+    require_admin_storage_client,
+)
 
 
 QUILL_TOOLBAR = [
@@ -44,6 +54,15 @@ def _fetch_attachments(post_id: str):
     )
 
 
+def _safe_storage_path(board_id: str, post_id: str, filename: str) -> str:
+    safe_name = re.sub(r"[^\w.\-]", "_", filename.strip()) or "file"
+    return f"{board_id}/{post_id}/{uuid.uuid4().hex}_{safe_name}"
+
+
+def _storage_upload_error_message(exc: Exception) -> str:
+    return f"첨부파일 업로드 실패: {format_storage_error(exc)}"
+
+
 def _download_file(storage_path: str) -> bytes:
     sb = get_supabase()
     return sb.storage.from_(STORAGE_BUCKET).download(storage_path)
@@ -77,9 +96,12 @@ def _render_post_list(board_id: str, board_name: str):
                 if is_admin():
                     if st.button("삭제", key=f"del_post_{post['id']}", type="secondary"):
                         sb = get_supabase()
+                        storage_sb = get_storage_client()
                         for att in attachments:
                             try:
-                                sb.storage.from_(STORAGE_BUCKET).remove([att["storage_path"]])
+                                storage_sb.storage.from_(STORAGE_BUCKET).remove(
+                                    [att["storage_path"]]
+                                )
                             except Exception:
                                 pass
                         sb.table("posts").delete().eq("id", post["id"]).execute()
@@ -122,26 +144,39 @@ def _render_post_list(board_id: str, board_name: str):
                 )
                 post_id = post_result.data[0]["id"]
 
-                for file in uploaded or []:
-                    path = f"{board_id}/{post_id}/{file.name}"
-                    sb.storage.from_(STORAGE_BUCKET).upload(
-                        path,
-                        file.getvalue(),
-                        {
-                            "content-type": file.type or "application/octet-stream",
-                            "upsert": "true",
-                        },
-                    )
-                    sb.table("post_attachments").insert(
-                        {
-                            "post_id": post_id,
-                            "file_name": file.name,
-                            "storage_path": path,
-                            "file_size": file.size,
-                        }
-                    ).execute()
+                if uploaded:
+                    try:
+                        storage_sb = require_admin_storage_client()
+                    except RuntimeError as exc:
+                        sb.table("posts").delete().eq("id", post_id).execute()
+                        st.error(str(exc))
+                        return
 
-                st.success("게시글이 등록되었습니다.")
+                    try:
+                        for file in uploaded:
+                            path = _safe_storage_path(board_id, post_id, file.name)
+                            storage_sb.storage.from_(STORAGE_BUCKET).upload(
+                                path,
+                                file.getvalue(),
+                                {
+                                    "content-type": file.type
+                                    or "application/octet-stream",
+                                },
+                            )
+                            sb.table("post_attachments").insert(
+                                {
+                                    "post_id": post_id,
+                                    "file_name": file.name,
+                                    "storage_path": path,
+                                    "file_size": file.size,
+                                }
+                            ).execute()
+                    except Exception as exc:
+                        sb.table("posts").delete().eq("id", post_id).execute()
+                        st.error(_storage_upload_error_message(exc))
+                        return
+
+                queue_message("게시글이 업로드 되었습니다")
                 st.rerun()
 
 

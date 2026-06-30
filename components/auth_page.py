@@ -3,7 +3,13 @@ import re
 import streamlit as st
 
 from components.caps_lock import password_field, render_caps_lock_detector
-from utils.supabase_client import get_supabase, load_profile, refresh_session
+from components.message_dialog import queue_message
+from utils.supabase_client import (
+    confirm_user_email,
+    get_supabase,
+    load_profile,
+    refresh_session,
+)
 
 
 def _normalize_phone(phone: str) -> str:
@@ -45,7 +51,7 @@ def render_login_tab():
             sb.auth.sign_in_with_password({"email": email, "password": password})
             refresh_session()
             load_profile()
-            st.success("로그인되었습니다.")
+            queue_message("로그인 되었습니다")
             st.rerun()
         except Exception as exc:
             st.error(f"로그인 실패: {exc}")
@@ -73,7 +79,7 @@ def render_signup_tab():
         phone_norm = _normalize_phone(phone)
         sb = get_supabase()
         try:
-            sb.auth.sign_up(
+            result = sb.auth.sign_up(
                 {
                     "email": email,
                     "password": password,
@@ -86,10 +92,22 @@ def render_signup_tab():
                     },
                 }
             )
-            st.success(
-                "회원가입이 완료되었습니다. "
-                "이메일 인증이 필요한 경우 메일함을 확인한 뒤 로그인해 주세요."
-            )
+            if not result.user:
+                st.error("회원가입에 실패했습니다.")
+                return
+
+            confirm_user_email(result.user.id)
+
+            signup_session = getattr(result, "session", None)
+            if signup_session:
+                refresh_session()
+            else:
+                sb.auth.sign_in_with_password({"email": email, "password": password})
+                refresh_session()
+
+            load_profile()
+            queue_message("가입 되었습니다")
+            st.rerun()
         except Exception as exc:
             st.error(f"회원가입 실패: {exc}")
 

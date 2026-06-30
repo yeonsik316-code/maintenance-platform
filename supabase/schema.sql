@@ -210,6 +210,24 @@ CREATE POLICY "post_files_insert_admin"
         )
     );
 
+CREATE POLICY "post_files_update_admin"
+    ON storage.objects FOR UPDATE
+    TO authenticated
+    USING (
+        bucket_id = 'post-files'
+        AND EXISTS (
+            SELECT 1 FROM public.profiles p
+            WHERE p.id = auth.uid() AND p.role = 'admin'
+        )
+    )
+    WITH CHECK (
+        bucket_id = 'post-files'
+        AND EXISTS (
+            SELECT 1 FROM public.profiles p
+            WHERE p.id = auth.uid() AND p.role = 'admin'
+        )
+    );
+
 CREATE POLICY "post_files_delete_admin"
     ON storage.objects FOR DELETE
     TO authenticated

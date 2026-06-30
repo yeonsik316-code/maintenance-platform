@@ -3,6 +3,7 @@ import streamlit as st
 from components.admin_page import render_admin_pages
 from components.auth_page import render_auth_page
 from components.boards_page import render_boards_page
+from components.message_dialog import render_pending_message
 from config import SUPABASE_ANON_KEY, SUPABASE_URL
 from utils.supabase_client import is_admin, load_profile, logout, refresh_session
 
@@ -35,6 +36,8 @@ def _menu_options():
 
 
 def main():
+    render_pending_message()
+
     user = st.session_state.get("user")
 
     if not user:
