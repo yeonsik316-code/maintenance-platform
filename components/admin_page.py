@@ -70,7 +70,10 @@ def render_member_management():
     for member in members:
         with st.container(border=True):
             col1, col2, col3, col4, col5 = st.columns([2, 2, 1, 1, 1])
-            col1.markdown(f"**전화번호**  \n{member['phone_number']}")
+            col1.markdown(
+                f"**아이디**  \n{member.get('username') or '-'}"
+                f"\n\n**전화번호**  \n{member['phone_number']}"
+            )
             col2.markdown(f"**이메일**  \n{member['email']}")
             role_label = "관리자" if member["role"] == "admin" else "일반"
             col3.markdown(f"**권한**  \n{role_label}")

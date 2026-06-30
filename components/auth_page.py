@@ -10,26 +10,34 @@ def _normalize_phone(phone: str) -> str:
     return re.sub(r"[\s\-]", "", phone.strip())
 
 
-def _lookup_email_by_phone(phone: str) -> str | None:
+def _lookup_email_by_identifier(identifier: str) -> str | None:
     sb = get_supabase()
-    result = sb.rpc("get_login_email", {"p_phone": phone}).execute()
+    result = sb.rpc("get_login_email", {"p_identifier": identifier}).execute()
     return result.data
 
 
 def render_login_tab():
     st.subheader("로그인")
-    phone = st.text_input("전화번호", key="login_phone", placeholder="01012345678")
+    login_id = st.text_input(
+        "전화번호 또는 아이디",
+        key="login_phone",
+        placeholder="01012345678 또는 shbmaster",
+    )
     password = password_field("비밀번호", key="login_password")
 
     if st.button("로그인", type="primary", key="btn_login", use_container_width=True):
-        phone_norm = _normalize_phone(phone)
-        if not phone_norm or not password:
-            st.error("전화번호와 비밀번호를 입력해 주세요.")
+        identifier = login_id.strip()
+        normalized = _normalize_phone(identifier)
+        login_id_norm = (
+            normalized if normalized.isdigit() and len(normalized) >= 9 else identifier
+        )
+        if not login_id_norm or not password:
+            st.error("전화번호(또는 아이디)와 비밀번호를 입력해 주세요.")
             return
 
-        email = _lookup_email_by_phone(phone_norm)
+        email = _lookup_email_by_identifier(login_id_norm)
         if not email:
-            st.error("등록되지 않은 전화번호입니다.")
+            st.error("등록되지 않은 전화번호 또는 아이디입니다.")
             return
 
         sb = get_supabase()
@@ -97,7 +105,7 @@ def render_forgot_tab():
             st.error("전화번호를 입력해 주세요.")
             return
 
-        email = _lookup_email_by_phone(phone_norm)
+        email = _lookup_email_by_identifier(phone_norm)
         if not email:
             st.error("등록되지 않은 전화번호입니다.")
             return

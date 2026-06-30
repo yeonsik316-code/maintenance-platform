@@ -6,12 +6,16 @@
 -- profiles: auth.users 와 1:1 연결
 CREATE TABLE IF NOT EXISTS public.profiles (
     id          UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    username    TEXT UNIQUE,
     phone_number TEXT NOT NULL UNIQUE,
     email       TEXT NOT NULL,
     role        TEXT NOT NULL DEFAULT 'user'
                 CHECK (role IN ('user', 'admin')),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS username TEXT UNIQUE;
+CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);
 
 CREATE INDEX IF NOT EXISTS idx_profiles_phone ON public.profiles(phone_number);
 CREATE INDEX IF NOT EXISTS idx_profiles_role  ON public.profiles(role);
@@ -225,9 +229,10 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-    INSERT INTO public.profiles (id, phone_number, email, role)
+    INSERT INTO public.profiles (id, username, phone_number, email, role)
     VALUES (
         NEW.id,
+        NULLIF(COALESCE(NEW.raw_user_meta_data->>'username', ''), ''),
         COALESCE(NEW.raw_user_meta_data->>'phone_number', ''),
         COALESCE(NEW.email, ''),
         COALESCE(NEW.raw_user_meta_data->>'role', 'user')
@@ -242,8 +247,8 @@ CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 로그인: 전화번호 → 이메일 조회 (비로그인 상태에서 사용)
-CREATE OR REPLACE FUNCTION public.get_login_email(p_phone TEXT)
+-- 로그인: 전화번호 또는 아이디 → 이메일 조회 (비로그인 상태에서 사용)
+CREATE OR REPLACE FUNCTION public.get_login_email(p_identifier TEXT)
 RETURNS TEXT
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -254,7 +259,14 @@ DECLARE
 BEGIN
     SELECT email INTO v_email
     FROM public.profiles
-    WHERE phone_number = p_phone;
+    WHERE phone_number = p_identifier OR username = p_identifier;
+
+    IF v_email IS NULL THEN
+        SELECT u.email INTO v_email
+        FROM auth.users u
+        WHERE u.raw_user_meta_data->>'username' = p_identifier;
+    END IF;
+
     RETURN v_email;
 END;
 $$;
