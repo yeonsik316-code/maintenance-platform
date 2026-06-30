@@ -71,14 +71,66 @@ def _original_filename(att: dict) -> str:
     return att.get("original_filename") or att.get("file_name") or "download"
 
 
+def _format_file_size(size: int | None) -> str:
+    if not size:
+        return "크기 정보 없음"
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _render_upload_preview(uploaded) -> None:
+    if not uploaded:
+        return
+    st.markdown("**업로드 예정 파일**")
+    for file in uploaded:
+        st.markdown(f"- `{file.name}` ({_format_file_size(file.size)})")
+
+
+def _upload_success_message(filenames: list[str]) -> str:
+    if not filenames:
+        return "게시글이 업로드 되었습니다"
+    files_text = "\n".join(f"- {name}" for name in filenames)
+    return f"게시글이 업로드 되었습니다\n\n**첨부파일**\n{files_text}"
+
+
 def _storage_upload_error_message(exc: Exception) -> str:
     return f"첨부파일 업로드 실패: {format_storage_error(exc)}"
 
 
-@st.cache_data(show_spinner=False, ttl=300)
 def _download_file(storage_path: str) -> bytes:
     sb = get_supabase()
     return sb.storage.from_(STORAGE_BUCKET).download(storage_path)
+
+
+def _render_attachment_download(att: dict) -> None:
+    original_name = _original_filename(att)
+    file_size = _format_file_size(att.get("file_size"))
+
+    with st.container(border=True):
+        st.markdown(f"**{original_name}**")
+        st.caption(file_size)
+        try:
+            data = _download_file(att["storage_path"])
+            st.download_button(
+                label="다운로드",
+                data=data,
+                file_name=original_name,
+                key=f"dl_{att['id']}",
+                use_container_width=True,
+            )
+        except Exception as exc:
+            st.warning(f"다운로드 실패: {exc}")
+
+
+def _render_attachments(attachments: list[dict]) -> None:
+    if not attachments:
+        return
+    st.markdown(f"**첨부파일** ({len(attachments)}개)")
+    for att in attachments:
+        _render_attachment_download(att)
 
 
 def _submit_post(board_id: str, title: str, content: str, uploaded) -> None:
@@ -99,6 +151,7 @@ def _submit_post(board_id: str, title: str, content: str, uploaded) -> None:
             .execute()
         )
         post_id = post_result.data[0]["id"]
+        uploaded_names: list[str] = []
 
         if uploaded:
             try:
@@ -111,6 +164,7 @@ def _submit_post(board_id: str, title: str, content: str, uploaded) -> None:
             try:
                 for file in uploaded:
                     original_name = file.name
+                    uploaded_names.append(original_name)
                     path = _storage_key(board_id, original_name)
                     storage_sb.storage.from_(STORAGE_BUCKET).upload(
                         path,
@@ -133,8 +187,7 @@ def _submit_post(board_id: str, title: str, content: str, uploaded) -> None:
                 st.error(_storage_upload_error_message(exc))
                 return
 
-        _download_file.clear()
-        queue_message("게시글이 업로드 되었습니다")
+        queue_message(_upload_success_message(uploaded_names))
         st.rerun()
     except Exception as exc:
         st.error(f"게시글 등록 실패: {exc}")
@@ -147,24 +200,14 @@ def _render_post_list(board_id: str, board_name: str):
         st.info("등록된 게시글이 없습니다.")
     else:
         for post in posts:
-            with st.expander(f"{post['title']}  ·  {post['created_at'][:10]}", expanded=False):
+            attachments = _fetch_attachments(post["id"])
+            attachment_label = f" · 📎 {len(attachments)}" if attachments else ""
+            with st.expander(
+                f"{post['title']}  ·  {post['created_at'][:10]}{attachment_label}",
+                expanded=False,
+            ):
                 st.markdown(post["content"], unsafe_allow_html=True)
-
-                attachments = _fetch_attachments(post["id"])
-                if attachments:
-                    st.markdown("**첨부파일**")
-                    for att in attachments:
-                        original_name = _original_filename(att)
-                        try:
-                            data = _download_file(att["storage_path"])
-                            st.download_button(
-                                label=f"📎 {original_name}",
-                                data=data,
-                                file_name=original_name,
-                                key=f"dl_{att['id']}",
-                            )
-                        except Exception as exc:
-                            st.warning(f"다운로드 실패 ({original_name}): {exc}")
+                _render_attachments(attachments)
 
                 if is_admin():
                     if st.button("삭제", key=f"del_post_{post['id']}", type="secondary"):
@@ -178,7 +221,6 @@ def _render_post_list(board_id: str, board_name: str):
                             except Exception:
                                 pass
                         sb.table("posts").delete().eq("id", post["id"]).execute()
-                        _download_file.clear()
                         st.success("게시글이 삭제되었습니다.")
                         st.rerun()
 
@@ -192,13 +234,15 @@ def _render_post_list(board_id: str, board_name: str):
             toolbar=QUILL_TOOLBAR,
             key=f"quill_{board_id}",
         )
+        uploaded = st.file_uploader(
+            "첨부파일 (선택)",
+            accept_multiple_files=True,
+            key=f"upload_{board_id}",
+        )
+        _render_upload_preview(uploaded)
 
         with st.form(key=f"post_form_{board_id}", clear_on_submit=True):
             title = st.text_input("제목")
-            uploaded = st.file_uploader(
-                "첨부파일 (선택)",
-                accept_multiple_files=True,
-            )
             submitted = st.form_submit_button("등록", type="primary")
 
         if submitted:
