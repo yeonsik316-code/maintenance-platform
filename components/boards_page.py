@@ -89,13 +89,6 @@ def _render_upload_preview(uploaded) -> None:
         st.markdown(f"- `{file.name}` ({_format_file_size(file.size)})")
 
 
-def _upload_success_message(filenames: list[str]) -> str:
-    if not filenames:
-        return "게시글이 업로드 되었습니다"
-    files_text = "\n".join(f"- {name}" for name in filenames)
-    return f"게시글이 업로드 되었습니다\n\n**첨부파일**\n{files_text}"
-
-
 def _storage_upload_error_message(exc: Exception) -> str:
     return f"첨부파일 업로드 실패: {format_storage_error(exc)}"
 
@@ -187,7 +180,7 @@ def _submit_post(board_id: str, title: str, content: str, uploaded) -> None:
                 st.error(_storage_upload_error_message(exc))
                 return
 
-        queue_message(_upload_success_message(uploaded_names))
+        queue_message("게시글이 업로드 되었습니다", files=uploaded_names or None)
         st.rerun()
     except Exception as exc:
         st.error(f"게시글 등록 실패: {exc}")

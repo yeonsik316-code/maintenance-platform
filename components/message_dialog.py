@@ -1,19 +1,19 @@
 import streamlit as st
 
 
-@st.dialog("알림")
-def _message_dialog(message: str):
-    st.markdown(message)
-    if st.button("확인", use_container_width=True, type="primary", key="msg_dialog_ok"):
-        st.session_state.pop("pending_message", None)
-        st.rerun()
-
-
-def queue_message(message: str):
-    st.session_state.pending_message = message
+def queue_message(message: str, files: list[str] | None = None):
+    st.session_state.toast_message = message
+    if files:
+        st.session_state.toast_files = files
 
 
 def render_pending_message():
-    message = st.session_state.get("pending_message")
+    message = st.session_state.pop("toast_message", None)
+    files = st.session_state.pop("toast_files", None)
+
     if message:
-        _message_dialog(message)
+        st.toast(message, icon="✅")
+
+    if files:
+        file_lines = "\n".join(f"- {name}" for name in files)
+        st.success(f"{message or '업로드 완료'}\n\n**첨부파일**\n{file_lines}")
