@@ -36,6 +36,7 @@ def refresh_session():
         st.session_state.access_token = active.access_token
         st.session_state.refresh_token = active.refresh_token
         st.session_state.user = active.user
+        _persist_auth_to_browser(active.access_token, active.refresh_token)
     elif st.session_state.get("access_token") and st.session_state.get("refresh_token"):
         try:
             sb.auth.set_session(
@@ -46,18 +47,34 @@ def refresh_session():
             active = getattr(session, "session", session) if session else None
             if active:
                 st.session_state.user = active.user
+                _persist_auth_to_browser(active.access_token, active.refresh_token)
                 return
         except Exception:
             pass
-        st.session_state.pop("access_token", None)
-        st.session_state.pop("refresh_token", None)
-        st.session_state.pop("user", None)
-        st.session_state.pop("profile", None)
+        _clear_persisted_auth()
     else:
-        st.session_state.pop("access_token", None)
-        st.session_state.pop("refresh_token", None)
-        st.session_state.pop("user", None)
-        st.session_state.pop("profile", None)
+        _clear_session_state()
+
+
+def _persist_auth_to_browser(access_token: str, refresh_token: str) -> None:
+    from utils.browser_session import save_auth_to_browser
+
+    save_auth_to_browser(access_token, refresh_token)
+
+
+def _clear_persisted_auth() -> None:
+    from utils.browser_session import clear_auth_from_browser, reset_bootstrap_flags
+
+    clear_auth_from_browser()
+    reset_bootstrap_flags()
+    _clear_session_state()
+
+
+def _clear_session_state() -> None:
+    st.session_state.pop("access_token", None)
+    st.session_state.pop("refresh_token", None)
+    st.session_state.pop("user", None)
+    st.session_state.pop("profile", None)
 
 
 def ensure_storage_bucket() -> bool:
@@ -141,6 +158,7 @@ def is_admin() -> bool:
 
 def logout():
     get_supabase().auth.sign_out()
-    for key in ("user", "access_token", "refresh_token", "profile", "supabase", "supabase_admin"):
+    _clear_persisted_auth()
+    for key in ("supabase", "supabase_admin"):
         st.session_state.pop(key, None)
     st.rerun()

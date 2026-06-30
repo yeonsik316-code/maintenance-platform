@@ -5,6 +5,7 @@ from components.auth_page import render_auth_page
 from components.boards_page import render_boards_page
 from components.message_dialog import render_pending_message
 from config import SUPABASE_ANON_KEY, SUPABASE_URL
+from utils.browser_session import bootstrap_auth_from_browser
 from utils.supabase_client import is_admin, load_profile, logout, refresh_session
 
 st.set_page_config(
@@ -20,6 +21,8 @@ if not SUPABASE_URL or not SUPABASE_ANON_KEY:
         "`SUPABASE_URL`, `SUPABASE_ANON_KEY`를 입력해 주세요."
     )
     st.stop()
+
+bootstrap_auth_from_browser()
 
 if "user" not in st.session_state:
     refresh_session()

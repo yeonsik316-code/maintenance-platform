@@ -2,3 +2,4 @@ streamlit>=1.32.0
 supabase>=2.4.0
 python-dotenv>=1.0.0
 streamlit-quill>=0.0.3
+streamlit-js-eval>=0.1.7
