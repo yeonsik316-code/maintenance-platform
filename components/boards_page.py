@@ -1,5 +1,6 @@
 import re
 import uuid
+from pathlib import Path
 
 import streamlit as st
 from streamlit_quill import st_quill
@@ -54,18 +55,89 @@ def _fetch_attachments(post_id: str):
     )
 
 
-def _safe_storage_path(board_id: str, post_id: str, filename: str) -> str:
-    safe_name = re.sub(r"[^\w.\-]", "_", filename.strip()) or "file"
-    return f"{board_id}/{post_id}/{uuid.uuid4().hex}_{safe_name}"
+def _file_extension(filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix and re.fullmatch(r"\.[a-z0-9]{1,10}", suffix):
+        return suffix.lstrip(".")
+    return "bin"
+
+
+def _storage_key(board_id: str, original_filename: str) -> str:
+    ext = _file_extension(original_filename)
+    return f"{board_id}/posts/{uuid.uuid4()}.{ext}"
+
+
+def _original_filename(att: dict) -> str:
+    return att.get("original_filename") or att.get("file_name") or "download"
 
 
 def _storage_upload_error_message(exc: Exception) -> str:
     return f"첨부파일 업로드 실패: {format_storage_error(exc)}"
 
 
+@st.cache_data(show_spinner=False, ttl=300)
 def _download_file(storage_path: str) -> bytes:
     sb = get_supabase()
     return sb.storage.from_(STORAGE_BUCKET).download(storage_path)
+
+
+def _submit_post(board_id: str, title: str, content: str, uploaded) -> None:
+    sb = get_supabase()
+    user_id = st.session_state.user.id
+
+    try:
+        post_result = (
+            sb.table("posts")
+            .insert(
+                {
+                    "board_id": board_id,
+                    "title": title,
+                    "content": content,
+                    "user_id": user_id,
+                }
+            )
+            .execute()
+        )
+        post_id = post_result.data[0]["id"]
+
+        if uploaded:
+            try:
+                storage_sb = require_admin_storage_client()
+            except RuntimeError as exc:
+                sb.table("posts").delete().eq("id", post_id).execute()
+                st.error(str(exc))
+                return
+
+            try:
+                for file in uploaded:
+                    original_name = file.name
+                    path = _storage_key(board_id, original_name)
+                    storage_sb.storage.from_(STORAGE_BUCKET).upload(
+                        path,
+                        file.getvalue(),
+                        {
+                            "content-type": file.type or "application/octet-stream",
+                        },
+                    )
+                    sb.table("post_attachments").insert(
+                        {
+                            "post_id": post_id,
+                            "file_name": original_name,
+                            "original_filename": original_name,
+                            "storage_path": path,
+                            "file_size": file.size,
+                        }
+                    ).execute()
+            except Exception as exc:
+                sb.table("posts").delete().eq("id", post_id).execute()
+                st.error(_storage_upload_error_message(exc))
+                return
+
+        _download_file.clear()
+        queue_message("게시글이 업로드 되었습니다")
+        st.rerun()
+    except Exception as exc:
+        st.error(f"게시글 등록 실패: {exc}")
 
 
 def _render_post_list(board_id: str, board_name: str):
@@ -82,16 +154,17 @@ def _render_post_list(board_id: str, board_name: str):
                 if attachments:
                     st.markdown("**첨부파일**")
                     for att in attachments:
+                        original_name = _original_filename(att)
                         try:
                             data = _download_file(att["storage_path"])
                             st.download_button(
-                                label=f"📎 {att['file_name']}",
+                                label=f"📎 {original_name}",
                                 data=data,
-                                file_name=att["file_name"],
+                                file_name=original_name,
                                 key=f"dl_{att['id']}",
                             )
                         except Exception as exc:
-                            st.warning(f"다운로드 실패 ({att['file_name']}): {exc}")
+                            st.warning(f"다운로드 실패 ({original_name}): {exc}")
 
                 if is_admin():
                     if st.button("삭제", key=f"del_post_{post['id']}", type="secondary"):
@@ -105,79 +178,35 @@ def _render_post_list(board_id: str, board_name: str):
                             except Exception:
                                 pass
                         sb.table("posts").delete().eq("id", post["id"]).execute()
+                        _download_file.clear()
                         st.success("게시글이 삭제되었습니다.")
                         st.rerun()
 
     if is_admin():
         st.divider()
         st.markdown(f"### ✏️ {board_name} 글 작성 (관리자)")
-        title = st.text_input("제목", key=f"title_{board_id}")
+
         content = st_quill(
             "",
             html=True,
             toolbar=QUILL_TOOLBAR,
             key=f"quill_{board_id}",
         )
-        uploaded = st.file_uploader(
-            "첨부파일 (선택)",
-            accept_multiple_files=True,
-            key=f"upload_{board_id}",
-        )
 
-        if st.button("등록", key=f"submit_{board_id}", type="primary"):
-            if not title or not content:
+        with st.form(key=f"post_form_{board_id}", clear_on_submit=True):
+            title = st.text_input("제목")
+            uploaded = st.file_uploader(
+                "첨부파일 (선택)",
+                accept_multiple_files=True,
+            )
+            submitted = st.form_submit_button("등록", type="primary")
+
+        if submitted:
+            content_value = content or st.session_state.get(f"quill_{board_id}", "")
+            if not title or not content_value:
                 st.error("제목과 내용을 입력해 주세요.")
             else:
-                sb = get_supabase()
-                user_id = st.session_state.user.id
-                post_result = (
-                    sb.table("posts")
-                    .insert(
-                        {
-                            "board_id": board_id,
-                            "title": title,
-                            "content": content,
-                            "user_id": user_id,
-                        }
-                    )
-                    .execute()
-                )
-                post_id = post_result.data[0]["id"]
-
-                if uploaded:
-                    try:
-                        storage_sb = require_admin_storage_client()
-                    except RuntimeError as exc:
-                        sb.table("posts").delete().eq("id", post_id).execute()
-                        st.error(str(exc))
-                        return
-
-                    try:
-                        for file in uploaded:
-                            path = _safe_storage_path(board_id, post_id, file.name)
-                            storage_sb.storage.from_(STORAGE_BUCKET).upload(
-                                path,
-                                file.getvalue(),
-                                {
-                                    "content-type": file.type
-                                    or "application/octet-stream",
-                                },
-                            )
-                            sb.table("post_attachments").insert(
-                                {
-                                    "post_id": post_id,
-                                    "file_name": file.name,
-                                    "storage_path": path,
-                                    "file_size": file.size,
-                                }
-                            ).execute()
-                    except Exception as exc:
-                        sb.table("posts").delete().eq("id", post_id).execute()
-                        st.error(_storage_upload_error_message(exc))
-                        return
-
-                queue_message("게시글이 업로드 되었습니다")
-                st.rerun()
+                _submit_post(board_id, title, content_value, uploaded)
 
 
 def render_boards_page():

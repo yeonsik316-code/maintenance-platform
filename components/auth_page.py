@@ -2,7 +2,7 @@ import re
 
 import streamlit as st
 
-from components.caps_lock import password_field, render_caps_lock_detector
+from components.caps_lock import render_caps_lock_detector
 from components.message_dialog import queue_message
 from utils.supabase_client import (
     confirm_user_email,
@@ -24,92 +24,99 @@ def _lookup_email_by_identifier(identifier: str) -> str | None:
 
 def render_login_tab():
     st.subheader("로그인")
-    login_id = st.text_input(
-        "전화번호 또는 아이디",
-        key="login_phone",
-        placeholder="01012345678 또는 shbmaster",
-    )
-    password = password_field("비밀번호", key="login_password")
-
-    if st.button("로그인", type="primary", key="btn_login", use_container_width=True):
-        identifier = login_id.strip()
-        normalized = _normalize_phone(identifier)
-        login_id_norm = (
-            normalized if normalized.isdigit() and len(normalized) >= 9 else identifier
+    with st.form("login_form", clear_on_submit=False):
+        login_id = st.text_input(
+            "전화번호 또는 아이디",
+            placeholder="01012345678 또는 shbmaster",
         )
-        if not login_id_norm or not password:
-            st.error("전화번호(또는 아이디)와 비밀번호를 입력해 주세요.")
-            return
+        password = st.text_input("비밀번호", type="password")
+        submitted = st.form_submit_button("로그인", type="primary", use_container_width=True)
 
-        email = _lookup_email_by_identifier(login_id_norm)
-        if not email:
-            st.error("등록되지 않은 전화번호 또는 아이디입니다.")
-            return
+    if not submitted:
+        return
 
-        sb = get_supabase()
-        try:
-            sb.auth.sign_in_with_password({"email": email, "password": password})
-            refresh_session()
-            load_profile()
-            queue_message("로그인 되었습니다")
-            st.rerun()
-        except Exception as exc:
-            st.error(f"로그인 실패: {exc}")
+    identifier = login_id.strip()
+    normalized = _normalize_phone(identifier)
+    login_id_norm = (
+        normalized if normalized.isdigit() and len(normalized) >= 9 else identifier
+    )
+    if not login_id_norm or not password:
+        st.error("전화번호(또는 아이디)와 비밀번호를 입력해 주세요.")
+        return
+
+    email = _lookup_email_by_identifier(login_id_norm)
+    if not email:
+        st.error("등록되지 않은 전화번호 또는 아이디입니다.")
+        return
+
+    sb = get_supabase()
+    try:
+        sb.auth.sign_in_with_password({"email": email, "password": password})
+        refresh_session()
+        load_profile()
+        queue_message("로그인 되었습니다")
+        st.rerun()
+    except Exception as exc:
+        st.error(f"로그인 실패: {exc}")
 
 
 def render_signup_tab():
     st.subheader("회원가입")
-    username = st.text_input("아이디", key="signup_username", placeholder="영문/숫자 조합")
-    password = password_field("비밀번호", key="signup_password")
-    password_confirm = password_field("비밀번호 확인", key="signup_password_confirm")
-    phone = st.text_input("전화번호", key="signup_phone", placeholder="01012345678")
-    email = st.text_input("이메일", key="signup_email", placeholder="name@company.com")
+    with st.form("signup_form", clear_on_submit=True):
+        username = st.text_input("아이디", placeholder="영문/숫자 조합")
+        password = st.text_input("비밀번호", type="password")
+        password_confirm = st.text_input("비밀번호 확인", type="password")
+        phone = st.text_input("전화번호", placeholder="01012345678")
+        email = st.text_input("이메일", placeholder="name@company.com")
+        submitted = st.form_submit_button("회원가입", type="primary", use_container_width=True)
 
-    if st.button("회원가입", type="primary", key="btn_signup", use_container_width=True):
-        if not all([username, password, phone, email]):
-            st.error("모든 항목을 입력해 주세요.")
+    if not submitted:
+        return
+
+    if not all([username, password, phone, email]):
+        st.error("모든 항목을 입력해 주세요.")
+        return
+    if password != password_confirm:
+        st.error("비밀번호가 일치하지 않습니다.")
+        return
+    if len(password) < 6:
+        st.error("비밀번호는 6자 이상이어야 합니다.")
+        return
+
+    phone_norm = _normalize_phone(phone)
+    sb = get_supabase()
+    try:
+        result = sb.auth.sign_up(
+            {
+                "email": email,
+                "password": password,
+                "options": {
+                    "data": {
+                        "username": username,
+                        "phone_number": phone_norm,
+                        "role": "user",
+                    }
+                },
+            }
+        )
+        if not result.user:
+            st.error("회원가입에 실패했습니다.")
             return
-        if password != password_confirm:
-            st.error("비밀번호가 일치하지 않습니다.")
-            return
-        if len(password) < 6:
-            st.error("비밀번호는 6자 이상이어야 합니다.")
-            return
 
-        phone_norm = _normalize_phone(phone)
-        sb = get_supabase()
-        try:
-            result = sb.auth.sign_up(
-                {
-                    "email": email,
-                    "password": password,
-                    "options": {
-                        "data": {
-                            "username": username,
-                            "phone_number": phone_norm,
-                            "role": "user",
-                        }
-                    },
-                }
-            )
-            if not result.user:
-                st.error("회원가입에 실패했습니다.")
-                return
+        confirm_user_email(result.user.id)
 
-            confirm_user_email(result.user.id)
+        signup_session = getattr(result, "session", None)
+        if signup_session:
+            refresh_session()
+        else:
+            sb.auth.sign_in_with_password({"email": email, "password": password})
+            refresh_session()
 
-            signup_session = getattr(result, "session", None)
-            if signup_session:
-                refresh_session()
-            else:
-                sb.auth.sign_in_with_password({"email": email, "password": password})
-                refresh_session()
-
-            load_profile()
-            queue_message("가입 되었습니다")
-            st.rerun()
-        except Exception as exc:
-            st.error(f"회원가입 실패: {exc}")
+        load_profile()
+        queue_message("가입 되었습니다")
+        st.rerun()
+    except Exception as exc:
+        st.error(f"회원가입 실패: {exc}")
 
 
 def render_forgot_tab():

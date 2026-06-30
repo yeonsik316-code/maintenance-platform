@@ -45,10 +45,13 @@ CREATE TABLE IF NOT EXISTS public.post_attachments (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     post_id     UUID NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
     file_name   TEXT NOT NULL,
+    original_filename TEXT NOT NULL,
     storage_path TEXT NOT NULL,
     file_size   BIGINT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.post_attachments ADD COLUMN IF NOT EXISTS original_filename TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_post_attachments_post_id ON public.post_attachments(post_id);
 

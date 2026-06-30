@@ -4,7 +4,7 @@ import streamlit as st
 @st.dialog("알림")
 def _message_dialog(message: str):
     st.markdown(f"**{message}**")
-    if st.button("확인", use_container_width=True, type="primary"):
+    if st.button("확인", use_container_width=True, type="primary", key="msg_dialog_ok"):
         st.session_state.pop("pending_message", None)
         st.rerun()
 
