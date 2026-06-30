@@ -23,9 +23,11 @@ def get_admin_client() -> Client | None:
 def refresh_session():
     sb = get_supabase()
     session = sb.auth.get_session()
-    if session and session.session:
-        st.session_state.access_token = session.session.access_token
-        st.session_state.user = session.session.user
+    # supabase-py 2.x: Session 객체 직접 반환 / 구버전: .session 속성
+    active = getattr(session, "session", session) if session else None
+    if active:
+        st.session_state.access_token = active.access_token
+        st.session_state.user = active.user
     else:
         st.session_state.pop("access_token", None)
         st.session_state.pop("user", None)
